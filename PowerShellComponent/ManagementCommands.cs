@@ -71,6 +71,66 @@ namespace PowerShellComponent
             return ReturnSet;
         }
 
+
+
+        public string NewADUser(string name, string externalEmailAddress, string password, string upn, string ou, string identity)
+        {
+            String ErrorText = "";
+            String ReturnSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+
+            // Load Exchange PowerShell snap-in.
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("New-MailUser");
+                        thisPipeline.Commands[0].Parameters.Add("Name", @name);
+                        thisPipeline.Commands[0].Parameters.Add("ExternalEmailAddress", @externalEmailAddress);
+                        thisPipeline.Commands[0].Parameters.Add("Password", @password);
+                        thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @upn);
+                        thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @ou);
+                        thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2003.thetoolbox.com");
+                        thisPipeline.Invoke();
+                        try
+                        {
+                            ReturnSet = GetUser(identity);
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorText = "Error: " + ex.ToString();
+                            return ErrorText;
+                        }
+
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling New-MailUser.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+
+                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+            return "";
+        }
         public bool DeleteUser(string identity)
         {
             String ReturnSet = "";
@@ -224,7 +284,11 @@ namespace PowerShellComponent
                     thisRunspace.Close();
                 }
             }
-            if (users.Count > 1)
+            if (users.Count == 0)
+            {
+                return null;
+            }
+            else if (users.Count > 1)
             {
 
                 XmlSerializer serializer = new XmlSerializer(typeof(List<ExchangeUser>));
