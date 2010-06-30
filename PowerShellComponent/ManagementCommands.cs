@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
 using System.Management.Automation;
@@ -8,6 +9,7 @@ using System.EnterpriseServices;
 using System.Security;
 using System.Security.Principal;
 using System.Runtime.InteropServices;
+using System.Linq;
 using System.Xml.Serialization;
 
 namespace PowerShellComponent
@@ -36,7 +38,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
                         thisPipeline.Commands[0].Parameters.Add("Alias", @alias);
                         thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2003.thetoolbox.com");
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2008.thetoolbox.com");
                         thisPipeline.Invoke();
                         try
                         {
@@ -71,9 +73,69 @@ namespace PowerShellComponent
             return ReturnSet;
         }
 
+        public string NewADUser(Dictionary<string, string> attributes)
+        {
+            String ErrorText = "";
+            String ReturnSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
 
+            // Load Exchange PowerShell snap-in.
+            config.AddPSSnapIn("Microsoft.ActiveDirectory.Management.ADUser", out warning);
+            if (warning != null) throw warning;
 
-        public string NewADUser(string name, string externalEmailAddress, string password, string upn, string ou, string identity)
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("New-ADUser");
+                        thisPipeline.Commands[0].Parameters.Add("Name", @attributes["name"]);
+                        thisPipeline.Commands[0].Parameters.Add("GivenName", @attributes["givenName"]);
+                        thisPipeline.Commands[0].Parameters.Add("Surname", @attributes["sn"]);
+                        if(@attributes.Keys.Contains<string>("ExternalEmailAddress"))
+                            thisPipeline.Commands[0].Parameters.Add("EmailAddress", @attributes["ExternalEmailAddress"]);
+                        thisPipeline.Commands[0].Parameters.Add("AccountPassword", @attributes["password"]);
+                        thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @attributes["upn"]);
+                        thisPipeline.Commands[0].Parameters.Add("Path", @attributes["dn"]);
+                        thisPipeline.Commands[0].Parameters.Add("SamAccountName", @attributes["samAccountName"]);
+                        thisPipeline.Commands[0].Parameters.Add("PasswordNeverExpires", true);
+                        thisPipeline.Invoke();
+                        try
+                        {
+                            ReturnSet = GetUser(attributes["identity"]);
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorText = "Error: " + ex.ToString();
+                            return ErrorText;
+                        }
+
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling New-ADUser.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+
+                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+            return ReturnSet;
+        }
+
+        public string NewExchangeUser(Dictionary<string, string> attributes)
         {
             String ErrorText = "";
             String ReturnSet = "";
@@ -91,18 +153,22 @@ namespace PowerShellComponent
                     thisRunspace.Open();
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
                     {
-                        thisPipeline.Commands.Add("New-MailUser");
-                        thisPipeline.Commands[0].Parameters.Add("Name", @name);
-                        thisPipeline.Commands[0].Parameters.Add("ExternalEmailAddress", @externalEmailAddress);
-                        thisPipeline.Commands[0].Parameters.Add("Password", @password);
-                        thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @upn);
-                        thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @ou);
+                        thisPipeline.Commands.Add("New-Mailbox");
+                        thisPipeline.Commands[0].Parameters.Add("Name", @attributes["name"]);
+                        thisPipeline.Commands[0].Parameters.Add("Alias", @attributes["alias"]);
+                        thisPipeline.Commands[0].Parameters.Add("FirstName", @attributes["givenName"]);
+                        thisPipeline.Commands[0].Parameters.Add("LastName", @attributes["sn"]);
+                        thisPipeline.Commands[0].Parameters.Add("DisplayName", @attributes["displayName"]);
+                        //thisPipeline.Commands[0].Parameters.Add("ExternalEmailAddress", @attributes["externalEmailAddress"]);
+                        thisPipeline.Commands[0].Parameters.Add("Password", @attributes["password"]);
+                        thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @attributes["upn"]);
+                        thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @attributes["ou"]);
                         thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2003.thetoolbox.com");
+                        //thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2008.thetoolbox.com");
                         thisPipeline.Invoke();
                         try
                         {
-                            ReturnSet = GetUser(identity);
+                            ReturnSet = GetUser(attributes["identity"]);
                         }
                         catch (Exception ex)
                         {
@@ -129,7 +195,7 @@ namespace PowerShellComponent
                     thisRunspace.Close();
                 }
             }
-            return "";
+            return ReturnSet;
         }
         public bool DeleteUser(string identity)
         {
@@ -151,7 +217,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands.Add("Remove-Mailbox");
                         thisPipeline.Commands[0].Parameters.Add("Identity", identity);
                         thisPipeline.Commands[0].Parameters.Add("Confirm", false);
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2003.thetoolbox.com");
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2008.thetoolbox.com");
 
                         try
                         {
@@ -194,7 +260,7 @@ namespace PowerShellComponent
 
         }
 
-        public string GetUser(string identity)
+        public string GetUser(string identity, int current_page = 1, int per_page = 10)
         {
             String ErrorText = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -202,6 +268,7 @@ namespace PowerShellComponent
             ExchangeUser user = null;
             List<ExchangeUser> users = new List<ExchangeUser>();
 
+            int total_entries;
             // Load Exchange PowerShell snap-in.
             config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
             if (warning != null) throw warning;
@@ -213,33 +280,53 @@ namespace PowerShellComponent
                     thisRunspace.Open();
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
                     {
-                        thisPipeline.Commands.Add("Get-User");
+                        thisPipeline.Commands.Add("Get-Mailbox");
                         if(identity.Length > 0) thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
+                        thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
 
                         try
                         {
-                            foreach (PSObject result in thisPipeline.Invoke())
+                            Collection<PSObject> original_results = thisPipeline.Invoke();
+                            total_entries = original_results.Count;
+                            IEnumerable<PSObject> results = null;
+                            if (current_page < 2)
+                                results = original_results.Take<PSObject>(per_page + 1);
+                            else
+                                results = original_results.Skip<PSObject>((current_page - 1) * per_page).Take<PSObject>(per_page);
+
+                            foreach (PSObject result in results)
                             {
                                 user = new ExchangeUser();
                                 foreach (PSMemberInfo member in result.Members)
                                 {
                                     switch (member.Name)
                                     {
-                                        case "FirstName":
-                                            user.givenName = member.Value.ToString().Trim();
-                                            break;
-                                        case "LastName":
-                                            user.sn = member.Value.ToString().Trim();
+                                        case "Alias":
+                                            user.alias = member.Value.ToString().Trim();
                                             break;
                                         case "DistinguishedName":
                                             user.dn = member.Value.ToString().Trim();
                                             break;
-                                        case "Name":
+                                        case "DisplayName":
                                             user.cn = member.Value.ToString().Trim();
                                             break;
                                         case "UserPrincipalName":
                                             user.upn = member.Value.ToString().Trim();
                                             break;
+                                        case "SamAccountName":
+                                            user.login = member.Value.ToString().Trim();
+                                            break;
+                                        case "OrganizationalUnit":
+                                            user.ou = member.Value.ToString().Trim();
+                                            user.ou = user.ou.Substring(user.ou.IndexOf('/')+1);
+                                            break;
+                                        case "WindowsEmailAddress":
+                                            user.email = member.Value.ToString().Trim();
+                                            break;
+                                        case "IsValid":
+                                            user.mailboxEnabled = (bool)member.Value;
+                                            break;
+
                                     }
                                 }
                                 if (user.upn.Length > 0)
@@ -247,11 +334,12 @@ namespace PowerShellComponent
                                     
                                         using (Pipeline newPipeline = thisRunspace.CreatePipeline())
                                         {
-                                            newPipeline.Commands.Add("Get-Mailbox");
-                                            newPipeline.Commands[0].Parameters.Add("Identity", @user.upn);
+                                            string vpn_identity = user.login + "-vpn@thetoolbox.com";
+                                            newPipeline.Commands.Add("Get-User");
+                                            newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
                                             foreach (PSObject result2 in newPipeline.Invoke())
                                             {
-                                                user.mailboxEnabled = (bool)result2.Members["IsValid"].Value;
+                                                user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
                                             }
                                         }
                                     users.Add(user);
@@ -288,12 +376,13 @@ namespace PowerShellComponent
             {
                 return null;
             }
-            else if (users.Count > 1)
+            else if (identity.Trim() == "")
             {
 
                 XmlSerializer serializer = new XmlSerializer(typeof(List<ExchangeUser>));
                 StringWriter textWriter = new StringWriter();
                 serializer.Serialize(textWriter, users);
+                textWriter.Write("THEWORLDSLARGESTSEPERATOR" + total_entries.ToString());
                 textWriter.Close();
                 return textWriter.ToString();
             }
@@ -301,10 +390,7 @@ namespace PowerShellComponent
             {
                 XmlSerializer serializer = new XmlSerializer(typeof(ExchangeUser));
                 StringWriter textWriter = new StringWriter();
-                if (users.Count == 0)
-                    serializer.Serialize(textWriter, new ExchangeUser());
-                else
-                    serializer.Serialize(textWriter, users[0]);
+                serializer.Serialize(textWriter, users[0]);
                 textWriter.Close();
                 return textWriter.ToString();
             }
