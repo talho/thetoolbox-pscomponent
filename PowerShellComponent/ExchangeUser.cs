@@ -3,9 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-
+// Scope PowerShellComponent
 namespace PowerShellComponent
 {
+    // Class ExchangeUser
     [Serializable()]
     public class ExchangeUser
     {
@@ -19,16 +20,17 @@ namespace PowerShellComponent
         public string email { get; set; }
         public bool has_vpn { get; set; }
 
+        // ExchangeUser()
+        // desc: Constructor
         public ExchangeUser()
         {
-            alias = "";
-            dn = "";
-            cn = "";
-            upn = "";
-            ou = "";
-            login = "";
-            email = "";
-            has_vpn = false;
+            dn             = "";
+            cn             = "";
+            upn            = "";
+            ou             = "";
+            login          = "";
+            email          = "";
+            has_vpn        = false;
             mailboxEnabled = false;
         }
     }
