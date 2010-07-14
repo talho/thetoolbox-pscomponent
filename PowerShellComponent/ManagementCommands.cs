@@ -325,7 +325,8 @@ namespace PowerShellComponent
                 try{
                     thisRunspace.Open();
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline()){
-                        thisPipeline.Commands.Add("Get-Mailbox");
+                        if (identity.IndexOf("-vpn") != -1) thisPipeline.Commands.Add("Get-User");
+                        else thisPipeline.Commands.Add("Get-Mailbox"); 
                         if(identity.Length > 0) thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
                         thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
                         try{
@@ -370,7 +371,8 @@ namespace PowerShellComponent
                                 }
                                 if (user.upn.Length > 0){
                                         using (Pipeline newPipeline = thisRunspace.CreatePipeline()){
-                                            string vpn_identity = user.login + "-vpn@thetoolbox.com";
+                                            string vpn_identity = user.upn.Replace("@", "-vpn@");
+                                            if (identity.IndexOf("-vpn") != -1) vpn_identity = user.upn;
                                             newPipeline.Commands.Add("Get-User");
                                             newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
                                             foreach (PSObject result2 in newPipeline.Invoke()){
@@ -387,11 +389,12 @@ namespace PowerShellComponent
                         // Check for errors in the pipeline and throw an exception if necessary.
                         if (thisPipeline.Error != null && thisPipeline.Error.Count > 0){
                             StringBuilder pipelineError = new StringBuilder();
-                            pipelineError.AppendFormat("Error calling Enable-Mailbox.");
+                            pipelineError.AppendFormat("Error calling Get-Mailbox.");
                             foreach (object item in thisPipeline.Error.ReadToEnd()){
                                 pipelineError.AppendFormat("{0}\n", item.ToString());
                             }
                             ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                            return ErrorText;
                         }
                     }
                 }
