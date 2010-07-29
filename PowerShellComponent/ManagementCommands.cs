@@ -312,96 +312,23 @@ namespace PowerShellComponent
         // return: string, ExchangeUser XML serialized
         public string GetUser(string identity, int current_page = 1, int per_page = 10)
         {
-            String ErrorText             = "";
-            RunspaceConfiguration config = RunspaceConfiguration.Create();
-            ExchangeUser user            = null;
+            //RunspaceConfiguration config = RunspaceConfiguration.Create();
             List<ExchangeUser> users     = new List<ExchangeUser>();
-            PSSnapInException warning;
+            //PSSnapInException warning;
             int total_entries;
             // Load Exchange PowerShell snap-in.
-            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
-            if (warning != null) throw warning;
-            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config)){
-                try{
-                    thisRunspace.Open();
-                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline()){
-                        if (identity.IndexOf("-vpn") != -1) thisPipeline.Commands.Add("Get-User");
-                        else thisPipeline.Commands.Add("Get-Mailbox"); 
-                        if(identity.Length > 0) thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
-                        thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
-                        try{
-                            Collection<PSObject> original_results = thisPipeline.Invoke();
-                            total_entries                         = original_results.Count;
-                            IEnumerable<PSObject> results         = null;
-                            if (current_page < 2)
-                                results = original_results.Take<PSObject>(per_page + 1);
-                            else
-                                results = original_results.Skip<PSObject>((current_page - 1) * per_page).Take<PSObject>(per_page);
+            //config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            //if (warning != null) throw warning;
 
-                            foreach (PSObject result in results){
-                                user = new ExchangeUser();
-                                foreach (PSMemberInfo member in result.Members){
-                                    switch (member.Name){
-                                        case "Alias":
-                                            user.alias = member.Value.ToString().Trim();
-                                            break;
-                                        case "DistinguishedName":
-                                            user.dn = member.Value.ToString().Trim();
-                                            break;
-                                        case "DisplayName":
-                                            user.cn = member.Value.ToString().Trim();
-                                            break;
-                                        case "UserPrincipalName":
-                                            user.upn = member.Value.ToString().Trim();
-                                            break;
-                                        case "SamAccountName":
-                                            user.login = member.Value.ToString().Trim();
-                                            break;
-                                        case "OrganizationalUnit":
-                                            user.ou = member.Value.ToString().Trim();
-                                            user.ou = user.ou.Substring(user.ou.IndexOf('/')+1);
-                                            break;
-                                        case "WindowsEmailAddress":
-                                            user.email = member.Value.ToString().Trim();
-                                            break;
-                                        case "IsValid":
-                                            user.mailboxEnabled = (bool)member.Value;
-                                            break;
-                                    }
-                                }
-                                if (user.upn.Length > 0){
-                                        using (Pipeline newPipeline = thisRunspace.CreatePipeline()){
-                                            string vpn_identity = user.upn.Replace("@", "-vpn@");
-                                            if (identity.IndexOf("-vpn") != -1) vpn_identity = user.upn;
-                                            newPipeline.Commands.Add("Get-User");
-                                            newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
-                                            foreach (PSObject result2 in newPipeline.Invoke()){
-                                                user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
-                                            }
-                                        }
-                                    users.Add(user);
-                                }
-                            }
-                        }catch (Exception ex){
-                            ErrorText = "Error: " + ex.ToString();
-                            return ErrorText;
-                        }
-                        // Check for errors in the pipeline and throw an exception if necessary.
-                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0){
-                            StringBuilder pipelineError = new StringBuilder();
-                            pipelineError.AppendFormat("Error calling Get-Mailbox.");
-                            foreach (object item in thisPipeline.Error.ReadToEnd()){
-                                pipelineError.AppendFormat("{0}\n", item.ToString());
-                            }
-                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
-                            return ErrorText;
-                        }
-                    }
-                }
-                finally{
-                    thisRunspace.Close();
-                }
+            try
+            {
+                users = GetUsers(out total_entries, identity:identity, displayName:"", current_page:current_page, per_page:per_page);
             }
+            catch (Exception e)
+            {
+                return e.Message;
+            }
+
             if (users.Count == 0){
                 return null;
             }else if (identity.Trim() == ""){
@@ -418,6 +345,489 @@ namespace PowerShellComponent
                 textWriter.Close();
                 return textWriter.ToString();
             }
+        }
+
+        private List<ExchangeUser> GetUsers(out int total_entries, string identity = "", string displayName = "", int current_page = 0, int per_page = 0)
+        {
+            String ErrorText = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            ExchangeUser user = null;
+            List<ExchangeUser> users = new List<ExchangeUser>();
+            PSSnapInException warning;
+            // Load Exchange PowerShell snap-in.
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        if (identity.IndexOf("-vpn") != -1) thisPipeline.Commands.Add("Get-User");
+                        else thisPipeline.Commands.Add("Get-Mailbox");
+                        if (identity != "") thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
+                        if (displayName != "") thisPipeline.Commands[0].Parameters.Add("Anr", @displayName);
+                        thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
+                        try
+                        {
+                            Collection<PSObject> original_results = thisPipeline.Invoke();
+                            total_entries = original_results.Count;
+                            IEnumerable<PSObject> results = null;
+
+                            if (current_page == 0 && per_page == 0)
+                                results = original_results;
+                            else if (current_page < 2)
+                                results = original_results.Take<PSObject>(per_page + 1);
+                            else
+                                results = original_results.Skip<PSObject>((current_page - 1) * per_page).Take<PSObject>(per_page);
+
+                            foreach (PSObject result in results)
+                            {
+                                user = ReadUserInformation(result);
+
+                                if (user.upn != "")
+                                {
+                                    using (Pipeline newPipeline = thisRunspace.CreatePipeline())
+                                    {
+                                        string vpn_identity = user.upn.Replace("@", "-vpn@");
+                                        if (identity.IndexOf("-vpn") != -1) vpn_identity = user.upn;
+                                        newPipeline.Commands.Add("Get-User");
+                                        newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
+                                        foreach (PSObject result2 in newPipeline.Invoke())
+                                        {
+                                            user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
+                                        }
+                                    }
+                                    users.Add(user);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorText = "Error: " + ex.ToString();
+                            throw new Exception(ErrorText);
+                        }
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling Get-Mailbox.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                            throw new Exception(ErrorText);
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+
+            return users;
+        }
+
+        // CreateDistributionGroup()
+        // desc: Method creates a new distribution list
+        // params: string group_name - Name of new disitribution list
+        // method: public
+        // return: bool
+        public string CreateDistributionGroup(string group_name, string ou)
+        {
+            String ReturnSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        try
+                        {
+                            thisPipeline.Commands.Add("New-DistributionGroup");
+                            thisPipeline.Commands[0].Parameters.Add("Name", @group_name);
+                            thisPipeline.Commands[0].Parameters.Add("Type", @"Distribution");
+                            thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @ou);
+                            thisPipeline.Commands[0].Parameters.Add("SamAccountName", @group_name);
+                            thisPipeline.Commands[0].Parameters.Add("Alias", @group_name.Replace(" ", ""));
+                            try
+                            {
+                                thisPipeline.Invoke();
+                                ReturnSet = GetDistributionGroup(group_name);
+                            }
+                            catch (Exception ex)
+                            {
+                                ReturnSet = "Error: " + ex.ToString();
+                            }
+                            // Check for errors in the pipeline and throw an exception if necessary.
+                            if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                            {
+                                StringBuilder pipelineError = new StringBuilder();
+                                pipelineError.AppendFormat("Error calling New-DistributionGroup.");
+                                foreach (object item in thisPipeline.Error.ReadToEnd())
+                                {
+                                    pipelineError.AppendFormat("{0}\n", item.ToString());
+                                }
+                                ReturnSet = ReturnSet + "Error: " + pipelineError.ToString();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            ReturnSet = "Error: " + ex.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+            return ReturnSet;
+        }
+
+        // GetDistributionGroup()
+        // desc: Method returns a list of Distribution Groups
+        // params: sring identity - Name of Distribution group to return
+        // method: public
+        // return: string
+        public string GetDistributionGroup(string identity, int current_page = 1, int per_page = 10)
+        {
+            String ErrorText = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            DistributionGroup group = null;
+            List<DistributionGroup> groups = new List<DistributionGroup>();
+            PSSnapInException warning;
+            int total_entries = 0;
+            // Load Exchange PowerShell snap-in.
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+           
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            { 
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        
+                        thisPipeline.Commands.Add("Get-DistributionGroup");
+                        if (identity != "") thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
+                        thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
+                        try
+                        {                            
+                            Collection<PSObject> original_results = thisPipeline.Invoke();
+                            total_entries = original_results.Count;
+                            IEnumerable<PSObject> results = null;
+                            if (current_page < 2)
+                                results = original_results.Take<PSObject>(per_page + 1);
+                            else
+                                results = original_results.Skip<PSObject>((current_page - 1) * per_page).Take<PSObject>(per_page);
+                           foreach (PSObject result in results)
+                           {
+                               
+                               group = new DistributionGroup();
+                               
+                               foreach (PSMemberInfo member in result.Members)
+                               {
+                                   
+                                   switch (member.Name)
+                                   {
+                                       case "Name":
+                                           group.name = member.Value.ToString().Trim();
+                                           break;
+                                       case "DisplayName":
+                                           group.displayName = member.Value.ToString().Trim();
+                                           break;
+                                       case "GroupType":
+                                           group.groupType = member.Value.ToString().Trim();
+                                           break;
+                                       case "PrimarySmtpAddress":
+                                           group.primarySmtpAddress = member.Value.ToString();
+                                           break;
+                                     
+                                   }
+                                     
+                               }
+                               if (group.displayName.Length > 0)
+                               {
+                                   group.users = GetDistributionGroupMembers(group.name);
+                                   groups.Add(group);
+                               }
+                                 
+                           }
+                            
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorText = "Error: " + ex.ToString();
+                            return ErrorText;
+                        }
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling Get-DistributionGroup.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                            return ErrorText;
+                        }
+                          
+                    }
+                      
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+               
+            }
+            if (groups.Count == 0)
+            {
+                return null;
+            }
+            else if (identity.Trim() == "")
+            {
+                XmlSerializer serializer = new XmlSerializer(typeof(List<DistributionGroup>));
+                StringWriter textWriter = new StringWriter();
+                serializer.Serialize(textWriter, groups);
+                textWriter.Write("THEWORLDSLARGESTSEPERATOR" + total_entries.ToString());
+                textWriter.Close();
+                return textWriter.ToString();
+            }
+            else
+            {
+                XmlSerializer serializer = new XmlSerializer(typeof(DistributionGroup));
+                StringWriter textWriter = new StringWriter();
+                serializer.Serialize(textWriter, groups[0]);
+                textWriter.Close();
+                return textWriter.ToString();
+            }
+        }
+
+        public List<ExchangeUser> GetDistributionGroupMembers(string identity)
+        {
+            String ErrorText = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            List<ExchangeUser> users = new List<ExchangeUser>();
+            PSSnapInException warning;
+            // Load Exchange PowerShell snap-in.
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+
+                        thisPipeline.Commands.Add("Get-DistributionGroupMember");
+                        thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
+                        try
+                        {
+                            Collection<PSObject> results = thisPipeline.Invoke();
+                            foreach (PSObject result in results)
+                            {
+                                ExchangeUser user = ReadUserInformation(result);
+                                
+                                if(user.alias != "")
+                                    users.Add(user);
+                            }
+
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorText = "Error: " + ex.ToString();
+                            throw new Exception(ErrorText);
+                        }
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling Get-DistributionGroup.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                            throw new Exception(ErrorText);
+                        }
+
+                    }
+
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+
+            return users;
+        }
+
+        private ExchangeUser ReadUserInformation(PSObject result)
+        {
+            ExchangeUser user = new ExchangeUser();
+            foreach (PSMemberInfo member in result.Members)
+            {
+                switch (member.Name)
+                {
+                    case "Alias":
+                        user.alias = member.Value.ToString().Trim();
+                        break;
+                    case "DistinguishedName":
+                        user.dn = member.Value.ToString().Trim();
+                        break;
+                    case "DisplayName":
+                        user.cn = member.Value.ToString().Trim();
+                        break;
+                    case "UserPrincipalName":
+                        user.upn = member.Value.ToString().Trim();
+                        break;
+                    case "SamAccountName":
+                        user.login = member.Value.ToString().Trim();
+                        break;
+                    case "OrganizationalUnit":
+                        user.ou = member.Value.ToString().Trim();
+                        user.ou = user.ou.Substring(user.ou.IndexOf('/') + 1);
+                        break;
+                    case "WindowsEmailAddress":
+                        user.email = member.Value.ToString().Trim();
+                        break;
+                    case "IsValid":
+                        user.mailboxEnabled = (bool)member.Value;
+                        break;
+                }
+            }
+            return user;
+        }
+
+        // AddToDistributionGroup()
+        // desc: Method adds a member to an existing distribution group
+        // params: string group_name - Name of new disitribution group
+        //         string alias      - Alias of member to add
+        // method: public
+        // return: bool
+        public bool AddToDistributionGroup(string group_name, string alias)
+        {
+            String ReturnSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        try
+                        {
+                            thisPipeline.Commands.Add("Add-DistributionGroupMember");
+                            thisPipeline.Commands[0].Parameters.Add("identity", @group_name);
+                            thisPipeline.Commands[0].Parameters.Add("member", @alias);
+                            try
+                            {
+                                thisPipeline.Invoke();
+                                ReturnSet = "True";
+                            }
+                            catch (Exception ex)
+                            {
+                                ReturnSet = "Error: " + ex.ToString();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            ReturnSet = "Error: " + ex.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+            if (ReturnSet == "True")
+                return true;
+            else
+                return false;
+        }
+
+        // CreateMailContact()
+        // desc: Method creates a new mail contact, returns mail contact alias on success
+        // params: string name  - Name of contact
+        //         string email - External email of contact
+        //         string ou    - Organizational Unit in which to create contact in
+        // method: public
+        // return: bool
+        public bool CreateMailContact(string name, string email, string ou)
+        {
+            bool Result = false;
+            string ErrorSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        try
+                        {
+                            thisPipeline.Commands.Add("New-MailContact");
+                            thisPipeline.Commands[0].Parameters.Add("Name", @name);
+                            thisPipeline.Commands[0].Parameters.Add("ExternalEmailAddress", @email);
+                            thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @ou);
+                            thisPipeline.Commands[0].Parameters.Add("Alias", @name.Replace(" ", ""));
+                            try
+                            {
+                                thisPipeline.Invoke();
+                                Result = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                ErrorSet = "Error: " + ex.ToString();
+                            }
+                            // Check for errors in the pipeline and throw an exception if necessary.
+                            if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                            {
+                                StringBuilder pipelineError = new StringBuilder();
+                                pipelineError.AppendFormat("Error calling New-MailContact.");
+                                foreach (object item in thisPipeline.Error.ReadToEnd())
+                                {
+                                    pipelineError.AppendFormat("{0}\n", item.ToString());
+                                }
+                                ErrorSet = ErrorSet + "Error: " + pipelineError.ToString();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorSet = "Error: " + ex.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+            return Result;
         }
 
         public string GetIdentity()
