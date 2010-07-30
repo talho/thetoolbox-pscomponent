@@ -2,11 +2,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using ToolBoxUtility;
 
 namespace PowerShellComponent
 {
     [Serializable()]
-    public class DistributionGroup
+    public class DistributionGroupBak
     {
         public string name { get; set; }
         public string displayName { get; set; }
@@ -17,7 +18,7 @@ namespace PowerShellComponent
 
         // ExchangeUser()
         // desc: Constructor
-        public DistributionGroup()
+        public DistributionGroupBak()
         {
             name               = "";
             displayName        = "";

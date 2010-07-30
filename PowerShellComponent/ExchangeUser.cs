@@ -9,7 +9,7 @@ namespace PowerShellComponent
 {
     // Class ExchangeUser
     [Serializable()]
-    public class ExchangeUser
+    public class ExchangeUserBak
     {
         public string alias { get; set; }
         public string dn { get; set; }
@@ -23,7 +23,7 @@ namespace PowerShellComponent
 
         // ExchangeUser()
         // desc: Constructor
-        public ExchangeUser()
+        public ExchangeUserBak()
         {
             dn             = "";
             cn             = "";

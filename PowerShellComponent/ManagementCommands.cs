@@ -11,6 +11,7 @@ using System.Security.Principal;
 using System.Runtime.InteropServices;
 using System.Linq;
 using System.Xml.Serialization;
+using ToolBoxUtility;
 
 // Scope PowerShellComponent
 namespace PowerShellComponent
@@ -312,17 +313,15 @@ namespace PowerShellComponent
         // return: string, ExchangeUser XML serialized
         public string GetUser(string identity, int current_page = 1, int per_page = 10)
         {
-            //RunspaceConfiguration config = RunspaceConfiguration.Create();
-            List<ExchangeUser> users     = new List<ExchangeUser>();
-            //PSSnapInException warning;
+            List<ExchangeUser> users = new List<ExchangeUser>();
+            ExchangeUserShorter shorty = new ExchangeUserShorter() { CurrentPage = current_page, PerPage = per_page };
             int total_entries;
-            // Load Exchange PowerShell snap-in.
-            //config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
-            //if (warning != null) throw warning;
 
             try
             {
                 users = GetUsers(out total_entries, identity:identity, displayName:"", current_page:current_page, per_page:per_page);
+                shorty.users = users;
+                shorty.TotalEntries = total_entries;
             }
             catch (Exception e)
             {
@@ -330,20 +329,11 @@ namespace PowerShellComponent
             }
 
             if (users.Count == 0){
-                return null;
+                return XmlSerializationHelper.Serialize(shorty);
             }else if (identity.Trim() == ""){
-                XmlSerializer serializer = new XmlSerializer(typeof(List<ExchangeUser>));
-                StringWriter textWriter  = new StringWriter();
-                serializer.Serialize(textWriter, users);
-                textWriter.Write("THEWORLDSLARGESTSEPERATOR" + total_entries.ToString());
-                textWriter.Close();
-                return textWriter.ToString();
+                return XmlSerializationHelper.Serialize(shorty);// +"THEWORLDSLARGESTSEPERATOR" + total_entries.ToString();
             }else{
-                XmlSerializer serializer = new XmlSerializer(typeof(ExchangeUser));
-                StringWriter textWriter  = new StringWriter();
-                serializer.Serialize(textWriter, users[0]);
-                textWriter.Close();
-                return textWriter.ToString();
+                return XmlSerializationHelper.Serialize(users[0]);
             }
         }
 
@@ -461,7 +451,7 @@ namespace PowerShellComponent
                             try
                             {
                                 thisPipeline.Invoke();
-                                ReturnSet = GetDistributionGroup(group_name);
+                                ReturnSet = GetDistributionGroup(group_name, 0, 0);
                             }
                             catch (Exception ex)
                             {
@@ -498,7 +488,7 @@ namespace PowerShellComponent
         // params: sring identity - Name of Distribution group to return
         // method: public
         // return: string
-        public string GetDistributionGroup(string identity, int current_page = 1, int per_page = 10)
+        public string GetDistributionGroup(string identity, int current_page, int per_page)
         {
             String ErrorText = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -526,8 +516,10 @@ namespace PowerShellComponent
                             Collection<PSObject> original_results = thisPipeline.Invoke();
                             total_entries = original_results.Count;
                             IEnumerable<PSObject> results = null;
-                            if (current_page < 2)
-                                results = original_results.Take<PSObject>(per_page + 1);
+                            if (current_page == 0 && per_page == 0)
+                                results = original_results;
+                            else if (current_page < 2)
+                                results = original_results.Take<PSObject>(per_page);// + 1); // This one is working as you would expect, as opposed to users. not sure what was done there
                             else
                                 results = original_results.Skip<PSObject>((current_page - 1) * per_page).Take<PSObject>(per_page);
                            foreach (PSObject result in results)
@@ -541,7 +533,7 @@ namespace PowerShellComponent
                                    switch (member.Name)
                                    {
                                        case "Name":
-                                           group.name = member.Value.ToString().Trim();
+                                           group.Name = member.Value.ToString().Trim();
                                            break;
                                        case "DisplayName":
                                            group.displayName = member.Value.ToString().Trim();
@@ -558,7 +550,7 @@ namespace PowerShellComponent
                                }
                                if (group.displayName.Length > 0)
                                {
-                                   group.users = GetDistributionGroupMembers(group.name);
+                                   group.users = GetDistributionGroupMembers(group.Name);
                                    groups.Add(group);
                                }
                                  
@@ -592,27 +584,9 @@ namespace PowerShellComponent
                 }
                
             }
-            if (groups.Count == 0)
-            {
-                return null;
-            }
-            else if (identity.Trim() == "")
-            {
-                XmlSerializer serializer = new XmlSerializer(typeof(List<DistributionGroup>));
-                StringWriter textWriter = new StringWriter();
-                serializer.Serialize(textWriter, groups);
-                textWriter.Write("THEWORLDSLARGESTSEPERATOR" + total_entries.ToString());
-                textWriter.Close();
-                return textWriter.ToString();
-            }
-            else
-            {
-                XmlSerializer serializer = new XmlSerializer(typeof(DistributionGroup));
-                StringWriter textWriter = new StringWriter();
-                serializer.Serialize(textWriter, groups[0]);
-                textWriter.Close();
-                return textWriter.ToString();
-            }
+            var shorty = new DistributionGroupsShorter() { PerPage = per_page, CurrentPage = current_page, 
+                TotalEntries = total_entries, groups = groups };
+            return XmlSerializationHelper.Serialize(shorty);                
         }
 
         public List<ExchangeUser> GetDistributionGroupMembers(string identity)

@@ -48,13 +48,17 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="DistributionGroup.cs" />
-    <Compile Include="ExchangeUser.cs" />
     <Compile Include="ManagementCommands.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="PowerShellComponent.snk" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\ExchSvc\ToolBoxUtility\ToolBoxUtility.csproj">
+      <Project>{C50EE2F4-E350-4677-90A8-72D6B3639DA4}</Project>
+      <Name>ToolBoxUtility</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
