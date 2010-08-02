@@ -248,7 +248,7 @@ namespace PowerShellComponent
         // params: Dictionary<string, string> attributes - Dictionary Object with attributes for changing a user password
         // method: public
         // return: bool
-        public bool ChangePassword(Dictionary<string, string> attributes)
+        public bool ChangePassword(string identity, string password)
         {
             String ReturnSet = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -268,10 +268,10 @@ namespace PowerShellComponent
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
                     {
                         thisPipeline.Commands.Add("Set-ADAccountPassword");
-                        thisPipeline.Commands[0].Parameters.Add("Identity", @attributes["identity"]);
+                        thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
                         thisPipeline.Commands[0].Parameters.Add("Reset", true);
                         SecureString secureString = new SecureString();
-                        foreach (char c in @attributes["password"])
+                        foreach (char c in @password)
                             secureString.AppendChar(c);
                         secureString.MakeReadOnly();
                         thisPipeline.Commands[0].Parameters.Add("NewPassword", secureString);
@@ -428,11 +428,13 @@ namespace PowerShellComponent
         // return: bool
         public string CreateDistributionGroup(string group_name, string ou)
         {
-            String ReturnSet = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
             PSSnapInException warning;
             config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
             if (warning != null) throw warning;
+
+            DistributionGroup group = new DistributionGroup() { error = "" };
+
             using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
             {
                 try
@@ -451,11 +453,15 @@ namespace PowerShellComponent
                             try
                             {
                                 thisPipeline.Invoke();
-                                ReturnSet = GetDistributionGroup(group_name, 0, 0);
+                                DistributionGroupsShorter shorty = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group_name, 0, 0));
+                                if (shorty.groups.Count > 0)
+                                    group = shorty.groups[0];
+                                else
+                                    throw new Exception("Group creation failed somewhere, new group was not found");
                             }
                             catch (Exception ex)
                             {
-                                ReturnSet = "Error: " + ex.ToString();
+                                group.error += " Error: " + ex.ToString();
                             }
                             // Check for errors in the pipeline and throw an exception if necessary.
                             if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
@@ -466,12 +472,12 @@ namespace PowerShellComponent
                                 {
                                     pipelineError.AppendFormat("{0}\n", item.ToString());
                                 }
-                                ReturnSet = ReturnSet + "Error: " + pipelineError.ToString();
+                                group.error += " Error: " + pipelineError.ToString();
                             }
                         }
                         catch (Exception ex)
                         {
-                            ReturnSet = "Error: " + ex.ToString();
+                            group.error += " Error: " + ex.ToString();
                         }
                     }
                 }
@@ -480,7 +486,8 @@ namespace PowerShellComponent
                     thisRunspace.Close();
                 }
             }
-            return ReturnSet;
+
+            return XmlSerializationHelper.Serialize(group);
         }
 
         // GetDistributionGroup()
@@ -529,9 +536,11 @@ namespace PowerShellComponent
                                
                                foreach (PSMemberInfo member in result.Members)
                                {
-                                   
                                    switch (member.Name)
                                    {
+                                       case "Alias":
+                                           group.Alias = member.Value.ToString().Trim();
+                                           break;
                                        case "Name":
                                            group.Name = member.Value.ToString().Trim();
                                            break;
@@ -550,7 +559,9 @@ namespace PowerShellComponent
                                }
                                if (group.displayName.Length > 0)
                                {
-                                   group.users = GetDistributionGroupMembers(group.Name);
+                                   group.users = new ExchangeUserMembers();
+                                   //if(identity != "") 
+                                   group.users.users = GetDistributionGroupMembers(group.Name);
                                    groups.Add(group);
                                }
                                  
@@ -683,6 +694,9 @@ namespace PowerShellComponent
                     case "IsValid":
                         user.mailboxEnabled = (bool)member.Value;
                         break;
+                    case "RecipientType":
+                        user.type = member.Value.ToString().Trim();
+                        break;
                 }
             }
             return user;
@@ -736,21 +750,13 @@ namespace PowerShellComponent
             }
             if (ReturnSet == "True")
                 return true;
-            else
-                return false;
+            else throw new Exception(ReturnSet);
+                //return false;
         }
 
-        // CreateMailContact()
-        // desc: Method creates a new mail contact, returns mail contact alias on success
-        // params: string name  - Name of contact
-        //         string email - External email of contact
-        //         string ou    - Organizational Unit in which to create contact in
-        // method: public
-        // return: bool
-        public bool CreateMailContact(string name, string email, string ou)
+        public bool RemoveFromDistributionGroup(string group_name, string alias)
         {
-            bool Result = false;
-            string ErrorSet = "";
+            String ReturnSet = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
             PSSnapInException warning;
             config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
@@ -764,35 +770,22 @@ namespace PowerShellComponent
                     {
                         try
                         {
-                            thisPipeline.Commands.Add("New-MailContact");
-                            thisPipeline.Commands[0].Parameters.Add("Name", @name);
-                            thisPipeline.Commands[0].Parameters.Add("ExternalEmailAddress", @email);
-                            thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @ou);
-                            thisPipeline.Commands[0].Parameters.Add("Alias", @name.Replace(" ", ""));
+                            thisPipeline.Commands.Add("Remove-DistributionGroupMember");
+                            thisPipeline.Commands[0].Parameters.Add("identity", @group_name);
+                            thisPipeline.Commands[0].Parameters.Add("member", @alias);
                             try
                             {
                                 thisPipeline.Invoke();
-                                Result = true;
+                                ReturnSet = "True";
                             }
                             catch (Exception ex)
                             {
-                                ErrorSet = "Error: " + ex.ToString();
-                            }
-                            // Check for errors in the pipeline and throw an exception if necessary.
-                            if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
-                            {
-                                StringBuilder pipelineError = new StringBuilder();
-                                pipelineError.AppendFormat("Error calling New-MailContact.");
-                                foreach (object item in thisPipeline.Error.ReadToEnd())
-                                {
-                                    pipelineError.AppendFormat("{0}\n", item.ToString());
-                                }
-                                ErrorSet = ErrorSet + "Error: " + pipelineError.ToString();
+                                ReturnSet = "Error: " + ex.ToString();
                             }
                         }
                         catch (Exception ex)
                         {
-                            ErrorSet = "Error: " + ex.ToString();
+                            ReturnSet = "Error: " + ex.ToString();
                         }
                     }
                 }
@@ -801,6 +794,163 @@ namespace PowerShellComponent
                     thisRunspace.Close();
                 }
             }
+            if (ReturnSet == "True")
+                return true;
+            else
+                return false;
+        }
+
+        public string UpdateDistributionGroup(string distributionGroupXml)
+        {
+            // We're going to update our users first. Othere things may follow, but users are the only one for now
+            DistributionGroup group = XmlSerializationHelper.Deserialize<DistributionGroup>(distributionGroupXml);
+
+            // get the current group member list
+            List<ExchangeUser> currentMembers = GetDistributionGroupMembers(group.Name);
+            
+            // find the members that are new: those that don't exist in the currentMember list
+            List<ExchangeUser> newUsers = group.users.users.Except(currentMembers, new LambdaComparer<ExchangeUser>((x, y) => x.alias == y.alias)).ToList();
+
+            // find the members that are removed
+            List<ExchangeUser> removedUsers = currentMembers.Except(group.users.users, new LambdaComparer<ExchangeUser>((x, y) => x.alias == y.alias)).ToList();
+
+            // Add users using the existing methodology
+            newUsers.FindAll(x => x.type == "MailContact").ForEach(x => CreateMailContact(ref x));
+            newUsers.ForEach(x => AddToDistributionGroup(group.Name, x.alias));
+
+            // Do the remove here, if we're removing anything
+            removedUsers.ForEach(x => RemoveFromDistributionGroup(group.Name, x.alias));
+
+            group.users.users = newUsers;
+            
+            // return the new group, though we won't use it.
+            return XmlSerializationHelper.Serialize(XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group.Name, 0, 0)).groups[0]);
+        }
+
+
+        public bool CreateMailContact(string name, string email, string ou, string alias = "")
+        {
+            ExchangeUser contact = new ExchangeUser() { cn = name, email = email, ou = ou, alias = alias, type = "MailContact"};
+            bool result = CreateMailContact(ref contact);
+            if (!result)
+                throw new Exception(contact.error);
+            else
+                return result;
+        }
+
+        // CreateMailContact()
+        // desc: Method creates a new mail contact, returns mail contact alias on success
+        // params: string name  - Name of contact
+        //         string email - External email of contact
+        //         string ou    - Organizational Unit in which to create contact in
+        // method: public
+        // return: bool
+        public bool CreateMailContact(ref ExchangeUser newContact, int limiter = 1)
+        {
+            if (newContact.alias == "") // If alias hasn't been set, give a default alias of the name minus any spaces
+                newContact.alias = newContact.cn.Replace(" ", "");
+
+            bool Result = false;
+            string ErrorSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+            ExchangeUser contact = null;
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    
+                    // first look for the contact to see if it already exists
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        if (newContact.alias != "")
+                        {
+                            thisPipeline.Commands.Add("Get-Contact");
+                            thisPipeline.Commands[0].Parameters.Add("Identity", @newContact.alias);
+                            try
+                            {
+                                Collection<PSObject> results = thisPipeline.Invoke();
+
+                                if (results.Count > 0)
+                                    contact = ReadUserInformation(results[0]);
+                            }
+                            catch { } // We don't really care about what went wrong, we're just going to say that the contact does not exist
+                        }
+                    }
+
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        try
+                        { 
+                            if (contact == null)
+                            {
+                                thisPipeline.Commands.Add("New-MailContact");
+                                thisPipeline.Commands[0].Parameters.Add("Name", @newContact.cn);
+                                thisPipeline.Commands[0].Parameters.Add("ExternalEmailAddress", @newContact.email);
+                                thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @newContact.ou);
+                                thisPipeline.Commands[0].Parameters.Add("Alias", @newContact.alias);
+                                try
+                                {
+                                    thisPipeline.Invoke();
+                                    Result = true;
+                                }
+                                catch (Exception ex)
+                                {
+                                    ErrorSet = "Error: " + ex.ToString();
+                                    newContact.error += "Error: " + ex.ToString();
+                                }
+                                // Check for errors in the pipeline and throw an exception if necessary.
+                                if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                                {
+                                    StringBuilder pipelineError = new StringBuilder();
+                                    pipelineError.AppendFormat("Error calling New-MailContact.");
+                                    foreach (object item in thisPipeline.Error.ReadToEnd())
+                                    {
+                                        pipelineError.AppendFormat("{0}\n", item.ToString());
+                                    }
+                                    ErrorSet = ErrorSet + "Error: " + pipelineError.ToString();
+                                    newContact.error += "Error: " + pipelineError.ToString();
+                                }
+                            }
+                            else
+                                Result = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorSet = "Error: " + ex.ToString();
+                            newContact.error += "Error: " + ex.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+
+            if (contact != null && contact.email != newContact.email)
+            {
+                // We found a user with the alias, but they had a different email, now we have to go unique alias hunting
+                int aliasNumber = 1;
+                if(int.TryParse(newContact.alias.Replace(newContact.cn.Replace(" ", ""), ""), out aliasNumber)) // replace, in the provided alias, the "default" alias to try to get a number
+                {
+                    aliasNumber++;
+                }
+
+                if (aliasNumber == 1 && limiter > 2 || limiter > 99) // Break out of the loop if the alias number isn't incrementing or if we've tried 99 other aliases
+                {
+                    return false;
+                }
+                else
+                {
+                    newContact.alias = newContact.cn.Replace(" ", "") + aliasNumber.ToString();
+                    return this.CreateMailContact(ref newContact, limiter + 1); // recurse this method to try to find another contact.
+                }
+            }
+
             return Result;
         }
 
