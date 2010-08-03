@@ -810,6 +810,7 @@ namespace PowerShellComponent
                             thisPipeline.Commands.Add("Remove-DistributionGroupMember");
                             thisPipeline.Commands[0].Parameters.Add("identity", @group_name);
                             thisPipeline.Commands[0].Parameters.Add("member", @alias);
+                            thisPipeline.Commands[0].Parameters.Add("Confirm", false);
                             try
                             {
                                 thisPipeline.Invoke();
@@ -834,7 +835,7 @@ namespace PowerShellComponent
             if (ReturnSet == "True")
                 return true;
             else
-                return false;
+                throw new Exception(ReturnSet);
         }
 
         /// <summary>
@@ -865,7 +866,7 @@ namespace PowerShellComponent
             removedUsers.ForEach(x => RemoveFromDistributionGroup(group.Name, x.alias));
 
             group = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group.Name, 0, 0)).groups[0];
-
+            
             try
             {
                 // We're going to reset the has children attribute, which we're storing on CustomAttribute11 here if it's not set properly
