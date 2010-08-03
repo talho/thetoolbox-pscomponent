@@ -379,7 +379,7 @@ namespace PowerShellComponent
                             if (current_page == 0 && per_page == 0)
                                 results = original_results;
                             else if (current_page < 2)
-                                results = original_results.Take<PSObject>(per_page + 1);
+                                results = original_results.Take<PSObject>(per_page);
                             else
                                 results = original_results.Skip<PSObject>((current_page - 1) * per_page).Take<PSObject>(per_page);
 
@@ -400,8 +400,9 @@ namespace PowerShellComponent
                                             user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
                                         }
                                     }
-                                    users.Add(user);
                                 }
+                                
+                                users.Add(user);
                             }
                         }
                         catch (Exception ex)
