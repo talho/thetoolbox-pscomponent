@@ -19,6 +19,8 @@ namespace PowerShellComponent
     // Class ManagementCommands
     public class ManagementCommands : System.EnterpriseServices.ServicedComponent
     {
+        #region Users and Mailboxes
+
         // EnableMailbox()
         // desc: Method uses PowerShellSnapIn "Microsoft.Exchange.Management.PowerShell.Admin" to enable mailbox on Exchange using CMDLET Enable-Mailbox
         // params: string identity - User login name
@@ -337,6 +339,15 @@ namespace PowerShellComponent
             }
         }
 
+        /// <summary>
+        /// Gets a list of users based on the provided identity, paged if provided.
+        /// </summary>
+        /// <param name="total_entries">output parameter of the total number of users found</param>
+        /// <param name="identity">the alias of the user we want to find. If it's blank, the method will find all users</param>
+        /// <param name="displayName">The display name of the user. Not used right now, may be later</param>
+        /// <param name="current_page">The current page, for paging, that we are on</param>
+        /// <param name="per_page">The number of users to display per page</param>
+        /// <returns>If identity is blank, returns a list with all users. If identity is not blank, returns all users</returns>
         private List<ExchangeUser> GetUsers(out int total_entries, string identity = "", string displayName = "", int current_page = 0, int per_page = 0)
         {
             String ErrorText = "";
@@ -420,6 +431,55 @@ namespace PowerShellComponent
 
             return users;
         }
+
+        /// <summary>
+        /// Reads a user's properties from the PSObject that is provided
+        /// </summary>
+        /// <param name="result">A powershell object with member elements</param>
+        /// <returns>An exchange user with properties filled out</returns>
+        private ExchangeUser ReadUserInformation(PSObject result)
+        {
+            ExchangeUser user = new ExchangeUser();
+            foreach (PSMemberInfo member in result.Members)
+            {
+                switch (member.Name)
+                {
+                    case "Alias":
+                        user.alias = member.Value.ToString().Trim();
+                        break;
+                    case "DistinguishedName":
+                        user.dn = member.Value.ToString().Trim();
+                        break;
+                    case "DisplayName":
+                        user.cn = member.Value.ToString().Trim();
+                        break;
+                    case "UserPrincipalName":
+                        user.upn = member.Value.ToString().Trim();
+                        break;
+                    case "SamAccountName":
+                        user.login = member.Value.ToString().Trim();
+                        break;
+                    case "OrganizationalUnit":
+                        user.ou = member.Value.ToString().Trim();
+                        user.ou = user.ou.Substring(user.ou.IndexOf('/') + 1);
+                        break;
+                    case "WindowsEmailAddress":
+                        user.email = member.Value.ToString().Trim();
+                        break;
+                    case "IsValid":
+                        user.mailboxEnabled = (bool)member.Value;
+                        break;
+                    case "RecipientType":
+                        user.type = member.Value.ToString().Trim();
+                        break;
+                }
+            }
+            return user;
+        }
+        
+        #endregion
+
+        #region Distribution Groups and management
 
         // CreateDistributionGroup()
         // desc: Method creates a new distribution list
@@ -553,15 +613,21 @@ namespace PowerShellComponent
                                        case "PrimarySmtpAddress":
                                            group.primarySmtpAddress = member.Value.ToString();
                                            break;
-                                     
+                                       case "CustomAttribute11": // We're using attribute 11 to indicate if we have children or not. it will be blank or true most likely
+                                           bool hasChildren;
+                                           if (bool.TryParse(member.Value.ToString().Trim(), out hasChildren) && hasChildren)
+                                               group.HasChildren = true;
+                                           else
+                                               group.HasChildren = false;
+                                           break;
                                    }
                                      
                                }
                                if (group.displayName.Length > 0)
                                {
                                    group.users = new ExchangeUserMembers();
-                                   //if(identity != "") 
-                                   group.users.users = GetDistributionGroupMembers(group.Name);
+                                   if (identity != "")
+                                       group.users.users = GetDistributionGroupMembers(group.Name);
                                    groups.Add(group);
                                }
                                  
@@ -600,6 +666,11 @@ namespace PowerShellComponent
             return XmlSerializationHelper.Serialize(shorty);                
         }
 
+        /// <summary>
+        /// Gets a list of users and contacts for the provided distribution group identity
+        /// </summary>
+        /// <param name="identity">The name/alias of a distribution group</param>
+        /// <returns>A list of users that belong to the provided distribution group</returns>
         public List<ExchangeUser> GetDistributionGroupMembers(string identity)
         {
             String ErrorText = "";
@@ -661,47 +732,7 @@ namespace PowerShellComponent
 
             return users;
         }
-
-        private ExchangeUser ReadUserInformation(PSObject result)
-        {
-            ExchangeUser user = new ExchangeUser();
-            foreach (PSMemberInfo member in result.Members)
-            {
-                switch (member.Name)
-                {
-                    case "Alias":
-                        user.alias = member.Value.ToString().Trim();
-                        break;
-                    case "DistinguishedName":
-                        user.dn = member.Value.ToString().Trim();
-                        break;
-                    case "DisplayName":
-                        user.cn = member.Value.ToString().Trim();
-                        break;
-                    case "UserPrincipalName":
-                        user.upn = member.Value.ToString().Trim();
-                        break;
-                    case "SamAccountName":
-                        user.login = member.Value.ToString().Trim();
-                        break;
-                    case "OrganizationalUnit":
-                        user.ou = member.Value.ToString().Trim();
-                        user.ou = user.ou.Substring(user.ou.IndexOf('/') + 1);
-                        break;
-                    case "WindowsEmailAddress":
-                        user.email = member.Value.ToString().Trim();
-                        break;
-                    case "IsValid":
-                        user.mailboxEnabled = (bool)member.Value;
-                        break;
-                    case "RecipientType":
-                        user.type = member.Value.ToString().Trim();
-                        break;
-                }
-            }
-            return user;
-        }
-
+        
         // AddToDistributionGroup()
         // desc: Method adds a member to an existing distribution group
         // params: string group_name - Name of new disitribution group
@@ -754,6 +785,12 @@ namespace PowerShellComponent
                 //return false;
         }
 
+        /// <summary>
+        /// Removes a single user from the provided distribution group with the provided alias
+        /// </summary>
+        /// <param name="group_name">The target distribution group</param>
+        /// <param name="alias">The alias of the users to be removed</param>
+        /// <returns>success</returns>
         public bool RemoveFromDistributionGroup(string group_name, string alias)
         {
             String ReturnSet = "";
@@ -800,6 +837,12 @@ namespace PowerShellComponent
                 return false;
         }
 
+        /// <summary>
+        /// The update distribution group method. Handles adding and removing group members and manages the group.HasChildren property.
+        /// </summary>
+        /// <remarks>Can be expanded to include other update features such as changing name, etc</remarks>
+        /// <param name="distributionGroupXml">The XML representation of the group to be updated</param>
+        /// <returns>The XML representation of the updated group</returns>
         public string UpdateDistributionGroup(string distributionGroupXml)
         {
             // We're going to update our users first. Othere things may follow, but users are the only one for now
@@ -821,13 +864,89 @@ namespace PowerShellComponent
             // Do the remove here, if we're removing anything
             removedUsers.ForEach(x => RemoveFromDistributionGroup(group.Name, x.alias));
 
-            group.users.users = newUsers;
+            group = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group.Name, 0, 0)).groups[0];
+
+            try
+            {
+                // We're going to reset the has children attribute, which we're storing on CustomAttribute11 here if it's not set properly
+                if (!group.HasChildren && group.users.users.Count > 0)
+                {
+                    this.SetDistributionGroupChildren(group.Name, true);
+                    group.HasChildren = true;
+                }
+                else if (group.HasChildren && group.users.users.Count == 0)
+                {
+                    this.SetDistributionGroupChildren(group.Name, false);
+                    group.HasChildren = false;
+                }
+            }
+            catch (Exception e)
+            {
+                group.error += e.Message; // If there's an error, we want to return that there was an error,
+                                          // but there's no action to take on that error here.
+            }
             
             // return the new group, though we won't use it.
-            return XmlSerializationHelper.Serialize(XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group.Name, 0, 0)).groups[0]);
+            return XmlSerializationHelper.Serialize(group);
         }
 
+        /// <summary>
+        /// Sets on attribute CustomAttribute11 a string indicating if a group has children or not.
+        /// </summary>
+        /// <param name="groupName">The group that may or may not have children</param>
+        /// <param name="hasChildren">If the group has children or not</param>
+        public void SetDistributionGroupChildren(string groupName, bool hasChildren)
+        {
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        try
+                        {
+                            thisPipeline.Commands.Add("Set-DistributionGroup");
+                            thisPipeline.Commands[0].Parameters.Add("identity", @groupName);
+                            thisPipeline.Commands[0].Parameters.Add("CustomAttribute11", @hasChildren);
+                            try
+                            {
+                                thisPipeline.Invoke();
+                            }
+                            catch (Exception ex)
+                            {
+                                throw ex;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            throw ex;
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+        }
 
+        #endregion
+
+        #region Mail Contacts
+
+        /// <summary>
+        /// Function for creating a single contact. Calls CreateMailContact(ref ExchangeUser newContact, int limiter = 1)
+        /// </summary>
+        /// <param name="name">The contact name, assumed in the form of "First Last"</param>
+        /// <param name="email">The contact's email address</param>
+        /// <param name="ou">The organizational unit that this contact will belong to</param>
+        /// <param name="alias">Optional alias for the user. If not provided, the alias will be set to whatever name was, minus the spaces</param>
+        /// <returns>success</returns>
         public bool CreateMailContact(string name, string email, string ou, string alias = "")
         {
             ExchangeUser contact = new ExchangeUser() { cn = name, email = email, ou = ou, alias = alias, type = "MailContact"};
@@ -953,6 +1072,8 @@ namespace PowerShellComponent
 
             return Result;
         }
+
+        #endregion
 
         public string GetIdentity()
         {
