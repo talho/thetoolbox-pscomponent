@@ -172,20 +172,27 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @attributes["ou"]);
                         thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
                         thisPipeline.Invoke();
-                        try{
-                            ReturnSet = GetUser(attributes["alias"]);
-                        }catch (Exception ex){
-                            ErrorText = "Error: " + ex.ToString();
-                            return ErrorText;
-                        }
                         // Check for errors in the pipeline and throw an exception if necessary.
-                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0){
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
                             StringBuilder pipelineError = new StringBuilder();
                             pipelineError.AppendFormat("Error calling New-MailUser.");
-                            foreach (object item in thisPipeline.Error.ReadToEnd()){
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
                                 pipelineError.AppendFormat("{0}\n", item.ToString());
                             }
-                            ErrorText = ErrorText + "Error: " + pipelineError.ToString();
+                            throw new Exception(ErrorText + "Error: " + pipelineError.ToString());
+                        }
+                        else
+                        {
+                            try
+                            {
+                                ReturnSet = GetUser(attributes["alias"]);
+                            }
+                            catch (Exception ex)
+                            {
+                                throw new Exception("Error: " + ex.ToString());
+                            }
                         }
                     }
                 }
@@ -937,9 +944,93 @@ namespace PowerShellComponent
             }
         }
 
+        public void DeleteDistributionGroup(string distributionGroupXml)
+        {
+            DistributionGroup group = XmlSerializationHelper.Deserialize<DistributionGroup>(distributionGroupXml);
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        
+                        thisPipeline.Commands.Add("Remove-DistributionGroup");
+                        thisPipeline.Commands[0].Parameters.Add("Identity", group.Alias);
+                        thisPipeline.Commands[0].Parameters.Add("Confirm", false);
+                        thisPipeline.Invoke();
+
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            throw new Exception(pipelineError.ToString());
+                        }                        
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+        }
+
         #endregion
 
         #region Mail Contacts
+
+        /// <summary>
+        /// Gets an existing mail contact
+        /// </summary>
+        /// <param name="alias">Alias of that contact</param>
+        /// <returns>A mail contact or null if it doesn't exist</returns>
+        public ExchangeUser GetMailContact(string alias)
+        {
+            ExchangeUser contact = null;
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+
+                    // first look for the contact to see if it already exists
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        
+                        thisPipeline.Commands.Add("Get-Contact");
+                        thisPipeline.Commands[0].Parameters.Add("Identity", alias);
+                        try
+                        {
+                            Collection<PSObject> results = thisPipeline.Invoke();
+
+                            if (results.Count > 0)
+                                contact = ReadUserInformation(results[0]);
+                        }
+                        catch { } // We don't really care about what went wrong, we're just going to say that the contact does not exist
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
+
+            return contact;
+        }
 
         /// <summary>
         /// Function for creating a single contact. Calls CreateMailContact(ref ExchangeUser newContact, int limiter = 1)
@@ -977,31 +1068,13 @@ namespace PowerShellComponent
             PSSnapInException warning;
             config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
             if (warning != null) throw warning;
-            ExchangeUser contact = null;
+            ExchangeUser contact = GetMailContact(newContact.alias);
             using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
             {
                 try
                 {
                     thisRunspace.Open();
                     
-                    // first look for the contact to see if it already exists
-                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
-                    {
-                        if (newContact.alias != "")
-                        {
-                            thisPipeline.Commands.Add("Get-Contact");
-                            thisPipeline.Commands[0].Parameters.Add("Identity", @newContact.alias);
-                            try
-                            {
-                                Collection<PSObject> results = thisPipeline.Invoke();
-
-                                if (results.Count > 0)
-                                    contact = ReadUserInformation(results[0]);
-                            }
-                            catch { } // We don't really care about what went wrong, we're just going to say that the contact does not exist
-                        }
-                    }
-
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
                     {
                         try
@@ -1073,6 +1146,52 @@ namespace PowerShellComponent
             }
 
             return Result;
+        }
+
+        /// <summary>
+        /// Deletes mail contacts, useful in testing.
+        /// </summary>
+        /// <param name="alias"></param>
+        public void DeleteMailContact(string alias)
+        {
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            PSSnapInException warning;
+            config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+            if (warning != null) throw warning;
+
+            ExchangeUser contact = GetMailContact(alias);
+            if (contact == null)
+                return;
+
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("Remove-MailContact");
+                        thisPipeline.Commands[0].Parameters.Add("Identity", alias);
+                        thisPipeline.Commands[0].Parameters.Add("Confirm", false);
+                        thisPipeline.Invoke();
+
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            throw new Exception(pipelineError.ToString());
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            }
         }
 
         #endregion
