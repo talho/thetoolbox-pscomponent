@@ -471,6 +471,7 @@ namespace PowerShellComponent
                         user.ou = member.Value.ToString().Trim();
                         user.ou = user.ou.Substring(user.ou.IndexOf('/') + 1);
                         break;
+                    case "PrimarySmtpAddress":
                     case "WindowsEmailAddress":
                         user.email = member.Value.ToString().Trim();
                         break;
@@ -861,14 +862,14 @@ namespace PowerShellComponent
             List<ExchangeUser> currentMembers = GetDistributionGroupMembers(group.Name);
             
             // find the members that are new: those that don't exist in the currentMember list
-            List<ExchangeUser> newUsers = group.users.users.Except(currentMembers, new LambdaComparer<ExchangeUser>((x, y) => x.alias == y.alias)).ToList();
+            List<ExchangeUser> newUsers = group.users.users.Except(currentMembers, new LambdaComparer<ExchangeUser>((x, y) => (x.type != "MailContact" && y.type != "MailContact" && x.alias == y.alias) || (x.type == "MailContact" && y.type == "MailContact" && x.email == y.email) )).ToList();
 
             // find the members that are removed
             List<ExchangeUser> removedUsers = currentMembers.Except(group.users.users, new LambdaComparer<ExchangeUser>((x, y) => x.alias == y.alias)).ToList();
 
             // Add users using the existing methodology
             newUsers.FindAll(x => x.type == "MailContact").ForEach(x => CreateMailContact(ref x));
-            newUsers.ForEach(x => AddToDistributionGroup(group.Name, x.alias));
+            newUsers.FindAll(x => x.error == "").ForEach(x => AddToDistributionGroup(group.Name, x.alias));
 
             // Do the remove here, if we're removing anything
             removedUsers.ForEach(x => RemoveFromDistributionGroup(group.Name, x.alias));
@@ -1011,7 +1012,7 @@ namespace PowerShellComponent
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
                     {
                         
-                        thisPipeline.Commands.Add("Get-Contact");
+                        thisPipeline.Commands.Add("Get-MailContact");
                         thisPipeline.Commands[0].Parameters.Add("Identity", alias);
                         try
                         {
@@ -1030,6 +1031,27 @@ namespace PowerShellComponent
             }
 
             return contact;
+        }
+
+        /// <summary>
+        /// Takes an unknown contact and matches on a number of parameters for that contact in the order of:
+        /// email, common name, alias
+        /// </summary>
+        /// <param name="contactMatch">the expanded contact that we want to try to match on</param>
+        /// <returns></returns>
+        public ExchangeUser GetMailContact(ExchangeUser contactMatch)
+        {
+            ExchangeUser ret = GetMailContact(contactMatch.email);
+            if (ret == null && contactMatch.cn != "")
+            {
+                ret = GetMailContact(contactMatch.cn);
+            }
+            if (ret == null && contactMatch.alias != "")
+            {
+                ret = GetMailContact(contactMatch.alias);
+            }
+
+            return ret;
         }
 
         /// <summary>
@@ -1057,7 +1079,7 @@ namespace PowerShellComponent
         //         string ou    - Organizational Unit in which to create contact in
         // method: public
         // return: bool
-        public bool CreateMailContact(ref ExchangeUser newContact, int limiter = 1)
+        public bool CreateMailContact(ref ExchangeUser newContact)
         {
             if (newContact.alias == "") // If alias hasn't been set, give a default alias of the name minus any spaces
                 newContact.alias = newContact.cn.Replace(" ", "");
@@ -1068,18 +1090,19 @@ namespace PowerShellComponent
             PSSnapInException warning;
             config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
             if (warning != null) throw warning;
-            ExchangeUser contact = GetMailContact(newContact.alias);
-            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            ExchangeUser contact = GetMailContact(newContact);
+
+            if (contact == null)
             {
-                try
+                using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
                 {
-                    thisRunspace.Open();
-                    
-                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    try
                     {
-                        try
-                        { 
-                            if (contact == null)
+                        thisRunspace.Open();
+
+                        using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                        {
+                            try
                             {
                                 thisPipeline.Commands.Add("New-MailContact");
                                 thisPipeline.Commands[0].Parameters.Add("Name", @newContact.cn);
@@ -1108,41 +1131,31 @@ namespace PowerShellComponent
                                     ErrorSet = ErrorSet + "Error: " + pipelineError.ToString();
                                     newContact.error += "Error: " + pipelineError.ToString();
                                 }
+
                             }
-                            else
-                                Result = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            ErrorSet = "Error: " + ex.ToString();
-                            newContact.error += "Error: " + ex.ToString();
+                            catch (Exception ex)
+                            {
+                                ErrorSet = "Error: " + ex.ToString();
+                                newContact.error += "Error: " + ex.ToString();
+                            }
                         }
                     }
-                }
-                finally
-                {
-                    thisRunspace.Close();
+                    finally
+                    {
+                        thisRunspace.Close();
+                    }
                 }
             }
+        
 
             if (contact != null && contact.email != newContact.email)
             {
-                // We found a user with the alias, but they had a different email, now we have to go unique alias hunting
-                int aliasNumber = 1;
-                if(int.TryParse(newContact.alias.Replace(newContact.cn.Replace(" ", ""), ""), out aliasNumber)) // replace, in the provided alias, the "default" alias to try to get a number
-                {
-                    aliasNumber++;
-                }
+                throw new Exception("Contact Conflict");
+            }
 
-                if (aliasNumber == 1 && limiter > 2 || limiter > 99) // Break out of the loop if the alias number isn't incrementing or if we've tried 99 other aliases
-                {
-                    return false;
-                }
-                else
-                {
-                    newContact.alias = newContact.cn.Replace(" ", "") + aliasNumber.ToString();
-                    return this.CreateMailContact(ref newContact, limiter + 1); // recurse this method to try to find another contact.
-                }
+            if (contact != null) // If at the end of everything
+            {
+                newContact = contact;
             }
 
             return Result;
