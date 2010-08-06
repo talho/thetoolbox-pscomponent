@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Linq;
 using System.Xml.Serialization;
 using ToolBoxUtility;
+using System.Configuration;
 
 // Scope PowerShellComponent
 namespace PowerShellComponent
@@ -248,6 +249,64 @@ namespace PowerShellComponent
             }if (ReturnSet == "True"){
                 return true;
             }else{
+                return false;
+            }
+        }
+
+        public bool DeleteADUser(string identity)
+        {
+            String ReturnSet = "";
+            RunspaceConfiguration config = RunspaceConfiguration.Create();
+            using (Runspace thisRunspace = RunspaceFactory.CreateRunspace(config))
+            {
+                try
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("Import-Module");
+                        thisPipeline.Commands[0].Parameters.Add("Name", "ActiveDirectory");
+                        thisPipeline.Invoke();
+                    }
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("Remove-ADUser");
+                        thisPipeline.Commands[0].Parameters.Add("Identity", identity);
+                        thisPipeline.Commands[0].Parameters.Add("Confirm", false);
+                        //thisPipeline.Commands[0].Parameters.Add("DomainController", ConfigurationManager.AppSettings["domainController"]);
+                        try
+                        {
+                            thisPipeline.Invoke();
+                            ReturnSet = "True";
+                        }
+                        catch (Exception ex)
+                        {
+                            ReturnSet = "Error: " + ex.ToString();
+                            throw new Exception(ReturnSet);
+                        }
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling Remove-ADUser.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            ReturnSet = ReturnSet + "Error: " + pipelineError.ToString();
+                        }
+                    }
+                }
+                finally
+                {
+                    thisRunspace.Close();
+                }
+            } if (ReturnSet == "True")
+            {
+                return true;
+            }
+            else
+            {
                 return false;
             }
         }

@@ -38,6 +38,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
+    <Reference Include="System.configuration" />
     <Reference Include="System.Management.Automation" />
     <Reference Include="System.Core" />
     <Reference Include="System.EnterpriseServices" />
@@ -52,6 +53,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="App.config" />
     <None Include="PowerShellComponent.snk" />
   </ItemGroup>
   <ItemGroup>
