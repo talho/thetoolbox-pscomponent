@@ -111,7 +111,8 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("Enabled", Int32.Parse(@attributes["acctDisabled"]));
                         thisPipeline.Invoke();
                         try{
-                            ReturnSet = GetUser(attributes["alias"].Replace("-vpn", ""));
+                            //ReturnSet = GetUser(attributes["alias"].Replace("-vpn", ""));
+                            ReturnSet = GetUser(attributes["upn"]);
                         }catch (Exception ex){
                             ErrorText = "Error: " + ex.ToString();
                             return ErrorText;
@@ -372,14 +373,15 @@ namespace PowerShellComponent
 
         }
 
-        // GetUser()
-        // desc: Method uses PowerShellSnapIn "Microsoft.Exchange.Management.PowerShell.Admin" to get user mailbox using CMDLET Get-Mailbox
-        // params: string identity  - User login name
-        //         int current_page - Current Page to return
-        //         int per_page     - Entries to return per page
-        // method: public
-        // return: string, ExchangeUser XML serialized
-        public string GetUser(string identity, int current_page = 1, int per_page = 10)
+        /// <summary>
+        /// Method uses PowerShellSnapIn "Microsoft.Exchange.Management.PowerShell.Admin" to get user mailbox using CMDLET Get-Mailbox
+        /// </summary>
+        /// <param name="identity">User login name</param>
+        /// <param name="current_page">Current Page to return</param>
+        /// <param name="per_page">Entries to return per page</param>
+        /// <param name="vpn_only">Return only VPN users, default is false</param>
+        /// <returns>String, ExchangeUser XML serialized</returns>
+        public string GetUser(string identity, int current_page = 1, int per_page = 10, bool vpn_only = false)
         {
             List<ExchangeUser> users = new List<ExchangeUser>();
             ExchangeUserShorter shorty = new ExchangeUserShorter() { CurrentPage = current_page, PerPage = per_page };
@@ -387,7 +389,7 @@ namespace PowerShellComponent
 
             try
             {
-                users = GetUsers(out total_entries, identity:identity, displayName:"", current_page:current_page, per_page:per_page);
+                users = GetUsers(out total_entries, identity:identity, displayName:"", current_page:current_page, per_page:per_page, vpn_only:vpn_only);
                 shorty.users = users;
                 shorty.TotalEntries = total_entries;
             }
@@ -413,8 +415,9 @@ namespace PowerShellComponent
         /// <param name="displayName">The display name of the user. Not used right now, may be later</param>
         /// <param name="current_page">The current page, for paging, that we are on</param>
         /// <param name="per_page">The number of users to display per page</param>
+        /// <param name="vpn_only">Return only VPN users, default is false</param>
         /// <returns>If identity is blank, returns a list with all users. If identity is not blank, returns all users</returns>
-        private List<ExchangeUser> GetUsers(out int total_entries, string identity = "", string displayName = "", int current_page = 0, int per_page = 0)
+        private List<ExchangeUser> GetUsers(out int total_entries, string identity = "", string displayName = "", int current_page = 0, int per_page = 0, bool vpn_only = false)
         {
             String ErrorText = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -431,9 +434,10 @@ namespace PowerShellComponent
                     thisRunspace.Open();
                     using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
                     {
-                        if (identity.IndexOf("-vpn") != -1) thisPipeline.Commands.Add("Get-User");
+                        if (identity.IndexOf("-vpn") != -1 || vpn_only) thisPipeline.Commands.Add("Get-User");
                         else thisPipeline.Commands.Add("Get-Mailbox");
                         if (identity != "") thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
+                        else if(vpn_only) thisPipeline.Commands[0].Parameters.Add("Filter", @"SamAccountName -like '*vpn*'");
                         if (displayName != "") thisPipeline.Commands[0].Parameters.Add("Anr", @displayName);
                         thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
                         try
@@ -453,17 +457,20 @@ namespace PowerShellComponent
                             {
                                 user = ReadUserInformation(result);
 
-                                if (user.upn != "")
+                                if (user.upn != "" && !vpn_only)
                                 {
                                     using (Pipeline newPipeline = thisRunspace.CreatePipeline())
                                     {
-                                        string vpn_identity = user.upn.Replace("@", "-vpn@");
-                                        if (identity.IndexOf("-vpn") != -1) vpn_identity = user.upn;
-                                        newPipeline.Commands.Add("Get-User");
-                                        newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
-                                        foreach (PSObject result2 in newPipeline.Invoke())
+                                        if (identity.IndexOf("-vpn") == -1)
                                         {
-                                            user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
+                                            string vpn_identity = user.upn.Replace("@", "-vpn@");
+                                            vpn_identity = user.upn;
+                                            newPipeline.Commands.Add("Get-User");
+                                            newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
+                                            foreach (PSObject result2 in newPipeline.Invoke())
+                                            {
+                                                user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
+                                            }
                                         }
                                     }
                                 }
@@ -1053,7 +1060,7 @@ namespace PowerShellComponent
         /// </summary>
         /// <param name="alias">Alias of that contact</param>
         /// <returns>A mail contact or null if it doesn't exist</returns>
-        public ExchangeUser GetMailContact(string alias)
+        protected ExchangeUser GetMailContact(string alias)
         {
             ExchangeUser contact = null;
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -1098,7 +1105,7 @@ namespace PowerShellComponent
         /// </summary>
         /// <param name="contactMatch">the expanded contact that we want to try to match on</param>
         /// <returns></returns>
-        public ExchangeUser GetMailContact(ExchangeUser contactMatch)
+        protected ExchangeUser GetMailContact(ExchangeUser contactMatch)
         {
             ExchangeUser ret = GetMailContact(contactMatch.email);
             if (ret == null && contactMatch.cn != "")
@@ -1111,6 +1118,11 @@ namespace PowerShellComponent
             }
 
             return ret;
+        }
+
+        public string GetSerializedMailContact(string contactMatch)
+        {
+            return XmlSerializationHelper.Serialize(GetMailContact(XmlSerializationHelper.Deserialize<ExchangeUser>(contactMatch)));
         }
 
         /// <summary>
@@ -1214,7 +1226,7 @@ namespace PowerShellComponent
 
             if (contact != null) // If at the end of everything
             {
-                newContact = contact;
+                newContact.alias = contact.alias;
             }
 
             return Result;
