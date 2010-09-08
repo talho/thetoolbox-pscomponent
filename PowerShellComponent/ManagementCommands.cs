@@ -172,6 +172,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("Password", secureString);
                         thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @attributes["upn"]);
                         thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @attributes["ou"]);
+                        thisPipeline.Commands[0].Parameters.Add("ResetPasswordOnNextLogon", Int32.Parse(@attributes["changePwd"]));
                         thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
                         thisPipeline.Invoke();
                         // Check for errors in the pipeline and throw an exception if necessary.
@@ -461,17 +462,17 @@ namespace PowerShellComponent
                                 {
                                     using (Pipeline newPipeline = thisRunspace.CreatePipeline())
                                     {
-                                        if (identity.IndexOf("-vpn") == -1)
-                                        {
+                                        //if (user.identity.IndexOf("-vpn") == -1)
+                                        //{
                                             string vpn_identity = user.upn.Replace("@", "-vpn@");
-                                            vpn_identity = user.upn;
+                                            //vpn_identity = user.upn;
                                             newPipeline.Commands.Add("Get-User");
                                             newPipeline.Commands[0].Parameters.Add("Identity", @vpn_identity);
                                             foreach (PSObject result2 in newPipeline.Invoke())
                                             {
                                                 user.has_vpn = (((string)result2.Members["UserPrincipalName"].Value).Length > 0);
                                             }
-                                        }
+                                        //}
                                     }
                                 }
                                 
