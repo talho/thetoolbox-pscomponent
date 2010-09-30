@@ -382,7 +382,7 @@ namespace PowerShellComponent
         /// <param name="per_page">Entries to return per page</param>
         /// <param name="vpn_only">Return only VPN users, default is false</param>
         /// <returns>String, ExchangeUser XML serialized</returns>
-        public string GetUser(string identity, int current_page = 1, int per_page = 10, bool vpn_only = false)
+        public string GetUser(string identity, int current_page = 1, int per_page = 10, bool vpn_only = false, string ou = "")
         {
             List<ExchangeUser> users = new List<ExchangeUser>();
             ExchangeUserShorter shorty = new ExchangeUserShorter() { CurrentPage = current_page, PerPage = per_page };
@@ -390,7 +390,7 @@ namespace PowerShellComponent
 
             try
             {
-                users = GetUsers(out total_entries, identity:identity, displayName:"", current_page:current_page, per_page:per_page, vpn_only:vpn_only);
+                users = GetUsers(out total_entries, identity:identity, displayName:"", current_page:current_page, per_page:per_page, vpn_only:vpn_only, ou:ou);
                 shorty.users = users;
                 shorty.TotalEntries = total_entries;
             }
@@ -418,7 +418,7 @@ namespace PowerShellComponent
         /// <param name="per_page">The number of users to display per page</param>
         /// <param name="vpn_only">Return only VPN users, default is false</param>
         /// <returns>If identity is blank, returns a list with all users. If identity is not blank, returns all users</returns>
-        private List<ExchangeUser> GetUsers(out int total_entries, string identity = "", string displayName = "", int current_page = 0, int per_page = 0, bool vpn_only = false)
+        private List<ExchangeUser> GetUsers(out int total_entries, string identity = "", string displayName = "", int current_page = 0, int per_page = 0, bool vpn_only = false, string ou = "")
         {
             String ErrorText = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -438,15 +438,17 @@ namespace PowerShellComponent
                         if (identity.IndexOf("-vpn") != -1 || vpn_only) thisPipeline.Commands.Add("Get-User");
                         else thisPipeline.Commands.Add("Get-Mailbox");
                         if (identity != "") thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
-                        else if(vpn_only) thisPipeline.Commands[0].Parameters.Add("Filter", @"SamAccountName -like '*vpn*'");
+                        else if(vpn_only) thisPipeline.Commands[0].Parameters.Add("Filter", "SamAccountName -like '*vpn*'");
                         if (displayName != "") thisPipeline.Commands[0].Parameters.Add("Anr", @displayName);
                         thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
                         try
                         {
-                            Collection<PSObject> original_results = thisPipeline.Invoke();
-                            total_entries = original_results.Count;
+                            List<PSObject> original_results = thisPipeline.Invoke().ToList();
                             IEnumerable<PSObject> results = null;
 
+                            if(ou != "" && !vpn_only)
+                                original_results = original_results.Where(x => x.Members["OrganizationalUnit"].Value.ToString() == ou).ToList();
+                            total_entries = original_results.Count;
                             if (current_page == 0 && per_page == 0)
                                 results = original_results;
                             else if (current_page < 2)
@@ -475,9 +477,10 @@ namespace PowerShellComponent
                                         //}
                                     }
                                 }
-                                
+
                                 users.Add(user);
                             }
+
                         }
                         catch (Exception ex)
                         {
@@ -536,7 +539,7 @@ namespace PowerShellComponent
                         break;
                     case "OrganizationalUnit":
                         user.ou = member.Value.ToString().Trim();
-                        user.ou = user.ou.Substring(user.ou.IndexOf('/') + 1);
+                        //user.ou = user.ou.Substring(user.ou.IndexOf('/') + 1);
                         break;
                     case "PrimarySmtpAddress":
                     case "WindowsEmailAddress":
