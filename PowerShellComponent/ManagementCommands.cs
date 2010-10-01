@@ -44,8 +44,8 @@ namespace PowerShellComponent
                         thisPipeline.Commands.Add("Enable-Mailbox");
                         thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
                         thisPipeline.Commands[0].Parameters.Add("Alias", @alias);
-                        thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2008.thetoolbox.com");
+                        thisPipeline.Commands[0].Parameters.Add("Database", ConfigurationManager.AppSettings["database"]);
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", ConfigurationManager.AppSettings["domainController"]);
                         thisPipeline.Invoke();
                         try{
                             ReturnSet = GetUser(identity);
@@ -173,7 +173,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @attributes["upn"]);
                         thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @attributes["ou"]);
                         thisPipeline.Commands[0].Parameters.Add("ResetPasswordOnNextLogon", Int32.Parse(@attributes["changePwd"]));
-                        thisPipeline.Commands[0].Parameters.Add("Database", @"mail2007.thetoolbox.com\First Storage Group\Mailbox Database");
+                        thisPipeline.Commands[0].Parameters.Add("Database", ConfigurationManager.AppSettings["database"]);
                         thisPipeline.Invoke();
                         // Check for errors in the pipeline and throw an exception if necessary.
                         if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
@@ -228,7 +228,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands.Add("Remove-Mailbox");
                         thisPipeline.Commands[0].Parameters.Add("Identity", identity);
                         thisPipeline.Commands[0].Parameters.Add("Confirm", false);
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", "adtest2008.thetoolbox.com");
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", ConfigurationManager.AppSettings["domainController"]);
                         try{
                             thisPipeline.Invoke();
                             ReturnSet = "True";
@@ -275,7 +275,6 @@ namespace PowerShellComponent
                         thisPipeline.Commands.Add("Remove-ADUser");
                         thisPipeline.Commands[0].Parameters.Add("Identity", identity);
                         thisPipeline.Commands[0].Parameters.Add("Confirm", false);
-                        //thisPipeline.Commands[0].Parameters.Add("DomainController", ConfigurationManager.AppSettings["domainController"]);
                         try
                         {
                             thisPipeline.Invoke();
@@ -448,6 +447,8 @@ namespace PowerShellComponent
 
                             if(ou != "" && !vpn_only)
                                 original_results = original_results.Where(x => x.Members["OrganizationalUnit"].Value.ToString() == ou).ToList();
+                            else if (ou != "" && vpn_only)
+                                original_results = original_results.Where(x => x.Members["Identity"].Value.ToString() == (ou + "/VPN/" + x.Members["Name"].Value.ToString())).ToList();
                             total_entries = original_results.Count;
                             if (current_page == 0 && per_page == 0)
                                 results = original_results;
@@ -592,7 +593,7 @@ namespace PowerShellComponent
                             try
                             {
                                 thisPipeline.Invoke();
-                                DistributionGroupsShorter shorty = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group_name, 0, 0));
+                                DistributionGroupsShorter shorty = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group_name, 0, 0, ""));
                                 if (shorty.groups.Count > 0)
                                     group = shorty.groups[0];
                                 else
@@ -634,7 +635,7 @@ namespace PowerShellComponent
         // params: sring identity - Name of Distribution group to return
         // method: public
         // return: string
-        public string GetDistributionGroup(string identity, int current_page, int per_page)
+        public string GetDistributionGroup(string identity, int current_page, int per_page, string ou)
         {
             String ErrorText = "";
             RunspaceConfiguration config = RunspaceConfiguration.Create();
@@ -659,9 +660,12 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
                         try
                         {                            
-                            Collection<PSObject> original_results = thisPipeline.Invoke();
-                            total_entries = original_results.Count;
+                            List<PSObject> original_results = thisPipeline.Invoke().ToList();
                             IEnumerable<PSObject> results = null;
+
+                            if (ou != "")
+                                original_results = original_results.Where(x => x.Members["OrganizationalUnit"].Value.ToString() == ou).ToList();
+                            total_entries = original_results.Count;
                             if (current_page == 0 && per_page == 0)
                                 results = original_results;
                             else if (current_page < 2)
@@ -944,7 +948,7 @@ namespace PowerShellComponent
             // Do the remove here, if we're removing anything
             removedUsers.ForEach(x => RemoveFromDistributionGroup(group.Name, x.alias));
 
-            group = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group.Name, 0, 0)).groups[0];
+            group = XmlSerializationHelper.Deserialize<DistributionGroupsShorter>(GetDistributionGroup(group.Name, 0, 0, "")).groups[0];
             
             try
             {
