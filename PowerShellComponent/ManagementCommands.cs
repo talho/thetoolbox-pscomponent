@@ -20,6 +20,20 @@ namespace PowerShellComponent
     // Class ManagementCommands
     public class ManagementCommands : System.EnterpriseServices.ServicedComponent
     {
+        private KeyValueConfigurationCollection appSettings = null;
+
+        private KeyValueConfigurationCollection AppSettings
+        {
+            get
+            {
+                if (appSettings == null)
+                {
+                    appSettings = ConfigurationManager.OpenExeConfiguration(System.Reflection.Assembly.GetExecutingAssembly().Location).AppSettings.Settings;
+                }
+                return appSettings;
+            }
+        }
+
         #region Users and Mailboxes
 
         // EnableMailbox()
@@ -44,8 +58,8 @@ namespace PowerShellComponent
                         thisPipeline.Commands.Add("Enable-Mailbox");
                         thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
                         thisPipeline.Commands[0].Parameters.Add("Alias", @alias);
-                        thisPipeline.Commands[0].Parameters.Add("Database", ConfigurationManager.AppSettings["database"]);
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", ConfigurationManager.AppSettings["domainController"]);
+                        thisPipeline.Commands[0].Parameters.Add("Database", AppSettings["database"].Value);
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", AppSettings["domainController"].Value);
                         thisPipeline.Invoke();
                         try{
                             ReturnSet = GetUser(identity);
@@ -173,7 +187,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands[0].Parameters.Add("UserPrincipalName", @attributes["upn"]);
                         thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @attributes["ou"]);
                         thisPipeline.Commands[0].Parameters.Add("ResetPasswordOnNextLogon", Int32.Parse(@attributes["changePwd"]));
-                        thisPipeline.Commands[0].Parameters.Add("Database", ConfigurationManager.AppSettings["database"]);
+                        thisPipeline.Commands[0].Parameters.Add("Database", AppSettings["database"].Value);
                         thisPipeline.Invoke();
                         // Check for errors in the pipeline and throw an exception if necessary.
                         if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
@@ -198,11 +212,105 @@ namespace PowerShellComponent
                             }
                         }
                     }
+
+                    // After Mailbox is created, set certain attributes
+                    // rewrite CustomAttribute1 to be OU
+                    // rewrite msExchQueryBaseDN
+                    // rewrite msExchUseOAB by setting OfflineAddressBook attribute
+                    using (Pipeline pipey = thisRunspace.CreatePipeline())
+                    {
+                        pipey.Commands.Add("Set-Mailbox");
+                        pipey.Commands[0].Parameters.Add("Identity", @attributes["alias"]);
+                        pipey.Commands[0].Parameters.Add("DomainController", AppSettings["domainController"].Value);
+                        pipey.Commands[0].Parameters.Add("CustomAttribute1", @attributes["ou"]);
+                        pipey.Commands[0].Parameters.Add("OfflineAddressBook", @attributes["useOAB"]);
+                        pipey.Invoke();
+                        using (Pipeline pipeCommand = thisRunspace.CreatePipeline())
+                        {
+                            String setQueryBaseDNCommand = "Get-Mailbox -Identity " + @attributes["alias"]
+                                                        + " | foreach{$dn='LDAP://'+$_.distinguishedName;"
+                                                        + "$obj=[ADSI]$dn;$obj.msExchQueryBaseDN='" + @attributes["dn"] + "';$obj.setInfo();}";
+                            pipeCommand.Commands.AddScript(setQueryBaseDNCommand);
+                            pipeCommand.Invoke();
+                        }
+                        
+                    }
                 }
             }catch (Exception ex){
                 ErrorText = "Error: " + ex.ToString();
                 return ErrorText;
             }finally{
+                thisRunspace.Close();
+            }
+            return ReturnSet;
+        }
+
+        // AddGroupMember()
+        // desc: Method uses Powershell Cmdlet Add-ADGroupMember
+        // params: Dictionary<string, string> attributes - Dictionary Object with attributes for adding member to group
+        // method: public
+        // return: bool
+        public string AddGroupMember(Dictionary<string, string> attributes)
+        {
+            String ErrorText             = "";
+            String ReturnSet             = "";
+            RunspaceConfiguration config = null;
+            PSSnapInException warning;
+            Runspace thisRunspace = null;
+            try
+            {
+                config = RunspaceConfiguration.Create();
+                // Load Exchange PowerShell snap-in.
+                config.AddPSSnapIn("Microsoft.Exchange.Management.PowerShell.Admin", out warning);
+                if (warning != null) throw warning;
+
+                using (thisRunspace = RunspaceFactory.CreateRunspace(config))
+                {
+                    thisRunspace.Open();
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("Import-Module");
+                        thisPipeline.Commands[0].Parameters.Add("Name", "ActiveDirectory");
+                        thisPipeline.Invoke();
+                    }
+                    using (Pipeline thisPipeline = thisRunspace.CreatePipeline())
+                    {
+                        thisPipeline.Commands.Add("Add-ADGroupMember");
+                        thisPipeline.Commands[0].Parameters.Add("Identity", @attributes["securityGroup"]);
+                        thisPipeline.Commands[0].Parameters.Add("Member", @attributes["alias"]);
+                        thisPipeline.Invoke();
+                        // Check for errors in the pipeline and throw an exception if necessary.
+                        if (thisPipeline.Error != null && thisPipeline.Error.Count > 0)
+                        {
+                            StringBuilder pipelineError = new StringBuilder();
+                            pipelineError.AppendFormat("Error calling Add-ADGroupMember.");
+                            foreach (object item in thisPipeline.Error.ReadToEnd())
+                            {
+                                pipelineError.AppendFormat("{0}\n", item.ToString());
+                            }
+                            throw new Exception(ErrorText + "Error: " + pipelineError.ToString());
+                        }
+                        else
+                        {
+                            try
+                            {
+                                ReturnSet = GetUser(attributes["alias"]);
+                            }
+                            catch (Exception ex)
+                            {
+                                throw new Exception("Error: " + ex.ToString());
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorText = "Error: " + ex.ToString();
+                return ErrorText;
+            }
+            finally
+            {
                 thisRunspace.Close();
             }
             return ReturnSet;
@@ -228,7 +336,7 @@ namespace PowerShellComponent
                         thisPipeline.Commands.Add("Remove-Mailbox");
                         thisPipeline.Commands[0].Parameters.Add("Identity", identity);
                         thisPipeline.Commands[0].Parameters.Add("Confirm", false);
-                        thisPipeline.Commands[0].Parameters.Add("DomainController", ConfigurationManager.AppSettings["domainController"]);
+                        thisPipeline.Commands[0].Parameters.Add("DomainController", AppSettings["domainController"].Value);
                         try{
                             thisPipeline.Invoke();
                             ReturnSet = "True";
@@ -436,20 +544,25 @@ namespace PowerShellComponent
                     {
                         if (identity.IndexOf("-vpn") != -1 || vpn_only) thisPipeline.Commands.Add("Get-User");
                         else thisPipeline.Commands.Add("Get-Mailbox");
+                        if (ou != "") thisPipeline.Commands[0].Parameters.Add("OrganizationalUnit", @ou);
                         if (identity != "") thisPipeline.Commands[0].Parameters.Add("Identity", @identity);
                         else if(vpn_only) thisPipeline.Commands[0].Parameters.Add("Filter", "SamAccountName -like '*vpn*'");
                         if (displayName != "") thisPipeline.Commands[0].Parameters.Add("Anr", @displayName);
                         thisPipeline.Commands[0].Parameters.Add("SortBy", "DisplayName");
+                        thisPipeline.Commands[0].Parameters.Add("ResultSize", "Unlimited");
                         try
                         {
                             List<PSObject> original_results = thisPipeline.Invoke().ToList();
                             IEnumerable<PSObject> results = null;
 
+                            //We need to filter the results further by OU, if ou is set in order to filter out possible child ou's from result list
                             if(ou != "" && !vpn_only)
                                 original_results = original_results.Where(x => x.Members["OrganizationalUnit"].Value.ToString() == ou).ToList();
                             else if (ou != "" && vpn_only)
                                 original_results = original_results.Where(x => x.Members["Identity"].Value.ToString() == (ou + "/VPN/" + x.Members["Name"].Value.ToString())).ToList();
+                            
                             total_entries = original_results.Count;
+                            
                             if (current_page == 0 && per_page == 0)
                                 results = original_results;
                             else if (current_page < 2)
@@ -598,6 +711,16 @@ namespace PowerShellComponent
                                     group = shorty.groups[0];
                                 else
                                     throw new Exception("Group creation failed somewhere, new group was not found");
+                                
+                                // rewrite CustomAttribute1 to be OU
+                                using (Pipeline pipey = thisRunspace.CreatePipeline())
+                                {
+                                    pipey.Commands.Add("Set-DistributionGroup");
+                                    pipey.Commands[0].Parameters.Add("Identity", group.Alias);
+                                    pipey.Commands[0].Parameters.Add("DomainController", AppSettings["domainController"].Value);
+                                    pipey.Commands[0].Parameters.Add("CustomAttribute1", ou);
+                                    pipey.Invoke();
+                                }
                             }
                             catch (Exception ex)
                             {
