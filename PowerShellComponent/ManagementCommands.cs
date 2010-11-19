@@ -126,7 +126,7 @@ namespace PowerShellComponent
                         thisPipeline.Invoke();
                         try{
                             //ReturnSet = GetUser(attributes["alias"].Replace("-vpn", ""));
-                            ReturnSet = GetUser(attributes["upn"]);
+                            ReturnSet = GetUser(@attributes["upn"]);
                         }catch (Exception ex){
                             ErrorText = "Error: " + ex.ToString();
                             return ErrorText;
@@ -679,7 +679,7 @@ namespace PowerShellComponent
         // params: string group_name - Name of new disitribution list
         // method: public
         // return: bool
-        public string CreateDistributionGroup(string group_name, string ou)
+        public string CreateDistributionGroup(string group_name, string ou, string auth_enabled)
         {
             RunspaceConfiguration config = RunspaceConfiguration.Create();
             PSSnapInException warning;
@@ -718,6 +718,7 @@ namespace PowerShellComponent
                                     pipey.Commands.Add("Set-DistributionGroup");
                                     pipey.Commands[0].Parameters.Add("Identity", group.Alias);
                                     pipey.Commands[0].Parameters.Add("DomainController", AppSettings["domainController"].Value);
+                                    pipey.Commands[0].Parameters.Add("RequireSenderAuthenticationEnabled", Int32.Parse(@auth_enabled));
                                     pipey.Commands[0].Parameters.Add("CustomAttribute1", ou);
                                     pipey.Invoke();
                                 }
